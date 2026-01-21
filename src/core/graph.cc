@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <numeric>
 #include <queue>
+#include "operators/transpose.h"
+#include "operators/matmul.h"
 
 namespace infini
 {
@@ -14,9 +16,15 @@ namespace infini
         {
             if (input)
             {
+                // 【小白讲解】建立连接关系
+                // 1. 让输入 Tensor 知道自己被这个 op 消费了 (addTarget)
                 input->addTarget(op);
                 if (auto pred = input->getSource())
                 {
+                    // 2. 如果输入 Tensor 有来源（由前一个 op 产生），
+                    //    那么前一个 op 就是当前 op 的【前驱 (Predecessor)】
+                    //    当前 op 就是前一个 op 的【后继 (Successor)】
+                    //    建立起 Op 之间的双向链表关系。
                     pred->addSuccessors(op);
                     op->addPredecessors(pred);
                 }
@@ -26,9 +34,12 @@ namespace infini
         {
             if (output)
             {
+                // 3. 让输出 Tensor 知道自己是由这个 op 产生的 (setSource)
                 output->setSource(op);
                 for (auto &succ : output->getTargets())
                 {
+                    // 4. 如果输出 Tensor 已经被后续的 op 消费了（在构建图时可能先加了后续 op），
+                    //    也需要完善 Op 之间的前后继关系。
                     succ->addPredecessors(op);
                     op->addSuccessors(succ);
                 }
@@ -69,6 +80,13 @@ namespace infini
         std::unordered_set<OperatorObj *> flags;
         sorted.reserve(ops.size());
         flags.reserve(ops.size());
+        // 【小白讲解】拓扑排序 (Kahn 算法变种)
+        // 任何有依赖关系的图（比如计算图 A->B->C），执行顺序必须是 A, B, C。
+        // 原理：
+        // 1. 找到那些所有依赖（Input Tensor）都已经准备好的 Op。
+        // 2. 把它们放入 sorted 列表。
+        // 3. 标记它们为“已处理”，这样依赖它们的后续 Op 就会变成“依赖已就绪”。
+        // 4. 循环直到所有 Op 都排好序。
         while (sorted.size() < ops.size())
         {
             // Any node is move to sorted in this loop.
@@ -122,6 +140,11 @@ namespace infini
 
     void GraphObj::shape_infer()
     {
+        // 【小白讲解】形状推导 (Shape Inference)
+        // 在深度学习中，很多时候我们只知道输入数据的形状（比如图片是 224x224）。
+        // 中间每一层的输出形状是可以算出来的。
+        // 比如：卷积层的输出形状取决于输入大小、卷积核大小、步长(stride)、填充(padding)等。
+        // 这个函数就是遍历所有 Op，让每个 Op 算出它输出 Tensor 应该长什么样。
         for (auto &op : ops)
         {
             auto ans = op->inferShape();
@@ -152,6 +175,41 @@ namespace infini
         // TODO：利用 allocator 给计算图分配内存
         // HINT: 获取分配好的内存指针后，可以调用 tensor 的 setDataBlob 函数给 tensor 绑定内存
         // =================================== 作业 ===================================
+        // 【小白讲解】内存分配建议：
+        // 1. 遍历所有 Tensor:
+        //    图里的 tensors 数组存储了所有的 tensor。
+        //
+        // 2. 申请内存:
+        //    对于每个 tensor，调用 allocator.alloc(tensor->getBytes())。
+        //    这个 allocator 就是我们在 allocator.cc 里写的那个，它会返回一个【偏移量 (offset)】。
+        //
+        // 3. 计算真实地址:
+        //    void* ptr = allocator.getPtr(); // 拿到整个大内存池的基地址
+        //    void* tensor_ptr = (char*)ptr + offset; // 基地址 + 偏移量 = 真实地址
+        //
+        // 4. 绑定给 Tensor:
+        //    tensor->setDataBlob(make_ref<BlobObj>(runtime, tensor_ptr));
+        //    这样这个 Tensor 就知道它的数据存在哪里了。
+        //
+        // *进阶思考*：
+        // 虽然这里还没要求，但真正的深度学习框架会做【内存复用】。
+        // 比如 Tensor A 用完了，后面的 Op 不再需要它了，那它的空间就可以释放 (allocator.free) 给 Tensor B 用。
+        // 简单的实现可以先把所有 tensor 都 alloc 一遍，暂不考虑 free。
+        std::unordered_map<int, size_t> tensor_offset_map;
+        for (auto &tensor : tensors) {
+            size_t offset = allocator.alloc(tensor->getBytes());
+            tensor_offset_map[tensor->getFuid()] = offset;
+        }
+
+        // 到这一步正式分配了空间
+        void *head_ptr = allocator.getPtr();
+        
+        // 这里要算出物理地址
+        for (auto &tensor : tensors) {
+            size_t offset = tensor_offset_map[tensor->getFuid()];
+            void *ptr = (char*)head_ptr + offset;
+            tensor->setDataBlob(make_ref<BlobObj>(runtime, ptr));
+        }
 
         allocator.info();
     }

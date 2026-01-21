@@ -12,31 +12,50 @@ namespace infini
     class GraphObj;
     using ShapeElem = int;
     using Shape = vector<ShapeElem>;
+    // TensorObj 类：数据载体（张量）
+    //
+    // 在深度学习中，Tensor 是流动的数据包。它不仅包含数值（data），
+    // 还包含元数据（metadata），比如形状 (shape)、数据类型 (dtype)，
+    // 以及它在计算图中的位置关系（source 和 targets）。
     class TensorObj : public Object
     {
         friend class GraphObj;
 
     protected:
-        int dim;
+        int dim; // 张量的维度数 (Rank)，比如 2D 矩阵 dim=2
 
-        DataType dtype;
+        DataType dtype; // 数据类型 (float32, int8 等)
+        
+        // 计算图连接关系：
+        // targets: 谁会用到我？（我是哪些 Op 的输入） -> 消费者列表
         vector<WRef<OperatorObj>> targets;
+        
+        // source: 我是谁产生的？（我是哪个 Op 的输出） -> 生产者
         WRef<OperatorObj> source;
+
+        // 实际的数据存储
+        // Blob 是一个封装了 void* 指针的对象，指向真正的内存地址
         Blob data;
-        Runtime runtime;
+        
+        Runtime runtime; // 数据存在哪里？(CPU, CUDA)
 
     private:
-        Shape shape;
-        size_t _size; // Cache of Π(shape).
-        Fuid fuid;    // Cloned tensors share the same id. Tensors constructed from
-                      // scratch have a new id.
+        Shape shape; // 具体的形状，比如 [batch, channel, height, width]
+        size_t _size; // 元素总个数缓存 (Cache of Π(shape))，比如 2*3=6
+        
+        Fuid fuid;    // 全局唯一 ID (Functional Unique ID)
+                      // 注意：Cloned tensors share the same id. (浅拷贝共享 ID)
+                      // Tensors constructed from scratch have a new id. (新创建的有新 ID)
 
     public:
         TensorObj(Shape shape, DataType dtype, Runtime runtime);
         virtual ~TensorObj() {}
         string toString() const override;
 
+        // 获取元素总个数 (比如 [2,3] -> 6)
         size_t size() const { return _size; }
+        
+        // 获取总字节数 (比如 6个float -> 24字节)
         size_t getBytes() const { return _size * dtype.getSize(); }
 
         Shape getDims() const { return shape; }
@@ -44,12 +63,18 @@ namespace infini
         size_t getRank() const { return shape.size(); }
         UidBaseType getFuid() const { return fuid; }
 
+        // 设置数据：通过一个生成器函数填充数据（用于 debug 或初始化）
         void setData(
             std::function<void(void *, size_t, DataType)> const &generator) const;
 
+        // 绑定实际的内存块 (Blob)
+        // 通常在 dataMalloc 阶段调用，确立物理地址。
         void setDataBlob(const Blob &blob);
 
+        // 打印数据内容 (Debug 用)
         void printData() const;
+        
+        // 比较两个 Tensor 的数据是否相等（校验结果用）
         bool equalData(const Tensor &rhs, double relativeError = 1e-6) const;
 
         template <typename T>
@@ -60,6 +85,7 @@ namespace infini
             return equalDataImpl(getRawDataPtr<T *>(), dataVector.data(), size());
         }
 
+        // 获取原始数据指针（危险操作，要小心类型转换）
         template <typename T>
         T getRawDataPtr() const
         {
@@ -72,7 +98,9 @@ namespace infini
         DataType getDType() const { return dtype; }
         Runtime getRuntime() const { return runtime; }
 
+        // 获取消费者 Op 列表
         OpVec getTargets() const { return wrefs_to_refs(targets); }
+        // 获取生产者 Op
         Operator getSource() const { return source.lock(); }
 
     private:
