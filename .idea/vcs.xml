@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rd-party/googletest" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/3rd-party/nlohmann_json_cmake_fetchcontent" vcs="Git" />
+  </component>
+</project>
